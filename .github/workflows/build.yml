@@ -1,0 +1,59 @@
+name: TARRAB
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: unzip
+        run: |
+          unzip -o TARRAB-app.zip -d /tmp/x
+          cp -r /tmp/x/TARRAB/. .
+      - name: firebase sdk
+        run: |
+          mkdir -p www/vendor
+          for m in app auth firestore; do
+            curl -sSfL "https://www.gstatic.com/firebasejs/10.12.2/firebase-$m.js" -o "www/vendor/firebase-$m.js"
+          done
+          sed -i "s#https://www.gstatic.com/firebasejs/10.12.2/#./#g" www/vendor/*.js
+          sed -i "s#tarrab-v1#tarrab-${GITHUB_SHA::8}#" www/sw.js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: android
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add android
+          python3 tools/android_setup.py
+          npx cap sync android
+          mkdir -p ~/.android
+          cp android-res/tarrab.keystore ~/.android/debug.keystore
+          cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../TARRAB.apk
+      - name: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest TARRAB.apk --title "TARRAB" --notes "TARRAB.apk"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+  iphone:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/deploy-pages@v4
